@@ -4,7 +4,9 @@
           (3) 매 판 P0~P5 시작 위치를 무작위로 섞는다(교수님 공지 반영).
    (4) 맵은 교수님 맵(FinalExamGameCore\dungeonmap.dat) 하나로 고정. 스폰 자리도 고정, 어느 플레이어가 어느 자리에 서는지만 바뀐다.
    사용: sim.exe [--games N] [--seed S] [--scenario 이름|all] [--show] [--watch ms]
-   팀원 전략 / 메타 추가 방법은 StrategySim\전략추가방법.md 참고. */
+   --teams a,b,c,d,e,f : 6팀을 이름으로 직접 지정 (첫 번째가 승률 기준 팀, 예: ours,team1,team2,safe,vulture,rusher)
+   팀원 전략 넣기: custom	eam1.c ~ team5.c 의 strat_teamN 을 팀원의 playerN_choose_command 로 교체(함수 이름만 strat_teamN 으로),
+   보조 함수/전역은 static 으로, 고친 뒤 build.bat 로 다시 빌드. 같은 --seed 로 돌리면 같은 판이라 비교가 공정하다. */
 #include <windows.h>
 #include <time.h>
 #include "../FinalExamGameCore/game.h"
@@ -17,7 +19,7 @@ Command strat_rusher(const char *), strat_wounded(const char *);
 Command strat_gatehunter(const char *), strat_hunter(const char *);
 Command strat_safe(const char *), strat_vulture(const char *), strat_exitguard(const char *);
 Command strat_brawler(const char *), strat_chaos(const char *);
-/* 팀원 전략 칸: custom\team1.c ~ team5.c 에 들어 있다 (붙여넣는 방법은 전략추가방법.md) */
+/* 팀원 전략 칸: custom\team1.c ~ team5.c 에 들어 있다 */
 Command strat_team1(const char *), strat_team2(const char *), strat_team3(const char *);
 Command strat_team4(const char *), strat_team5(const char *);
 
