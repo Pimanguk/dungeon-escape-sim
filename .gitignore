@@ -1,0 +1,13 @@
+.vs/
+x64/
+[Dd]ebug/
+[Rr]elease/
+bin/
+obj/
+*.obj
+*.pdb
+*.exe
+*.user
+run-*/
+*_diagnostics.log
+StrategySim/replays/
