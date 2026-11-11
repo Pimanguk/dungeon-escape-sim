@@ -1,10 +1,12 @@
 /* 전략 시뮬레이터. 교수님 코어(game.c/snapshot.c)를 그대로 링크해서 규칙은 100% 동일하다.
    차이점: (1) AI를 별도 프로세스 대신 같은 프로세스에서 호출해 빠르게 수천 판을 돌린다.
-          (2) H0는 영구 사망 처리(최종 대회와 동일하게 6명만 경쟁).
-          (3) 매 판 P0~P5 시작 위치를 무작위로 섞는다(교수님 공지 반영).
-   (4) 맵은 기본으로 교수님 맵(FinalExamGameCore\dungeonmap.dat). --map 으로 다른 맵 파일을 줄 수 있다(StrategySim\maps 에 예시 5개).
-       스폰 자리는 맵에 적힌 대로 고정이고, 어느 플레이어가 어느 자리에 서는지만 판마다 바뀐다.
-   사용: sim.exe [--games N] [--seed S] [--scenario 이름|all] [--map 파일] [--show] [--watch ms]
+          (2) H0는 영구 사망 처리(최종 대회와 동일하게 6명만 경쟁). 지도에 H0 표시가 없어도 읽는다(임시 지도에 H0를 넣어 코어에 넘긴다).
+          (3) 매 판 P0~P5 시작 위치를 무작위로 섞는다(교수님 공지 반영). --fixseat 를 주면 맵에 적힌 P0 자리에 고정한다.
+   (4) 맵은 기본으로 교수님 맵(FinalExamGameCore\dungeonmap.dat). --map 으로 다른 맵 파일을 줄 수 있다(StrategySim\maps 에 예시).
+   (5) 열쇠 위치: 기본은 맵에 적힌 자리. --keycells "x,y;x,y;..." 로 후보 칸을 주면 판마다 그 중 하나에 놓고,
+       지도 옆에 <지도파일>.keycells 가 있으면 옵션 없이도 그 칸들을 쓴다. --keyzones / --keyzone N 은 네 모서리 구역에 놓는다.
+   사용: sim.exe [--games N] [--seed S] [--scenario 이름|all] [--map 파일] [--fixseat] [--keycells ..] [--byseat] [--show] [--watch ms]
+   --byseat : 끝에 시작 자리별 / 열쇠 칸별 승률표를 낸다.
    --teams a,b,c,d,e,f : 6팀을 이름으로 직접 지정 (첫 번째가 승률 기준 팀, 예: ours,team1,team2,safe,vulture,rusher)
    P0 자리(ours)는 FinalExamGameCore\player0.c 의 player0_choose_command 이다. 거기에 내 전략을 넣으면 된다.
    팀원 전략 넣기: custom\team1.c ~ team5.c 의 strat_teamN 을 팀원의 playerN_choose_command 로 교체(함수 이름만 strat_teamN 으로),
@@ -108,6 +110,12 @@ static Strategy find(const char *name)
     fprintf(stderr, "unknown strategy %s\n", name); exit(1);
 }
 
+static int fix_seat = 0; /* --fixseat: 자리를 섞지 않고 맵에 적힌 P0 자리에 내가 선다(교실 시연처럼 자리가 정해진 경우) */
+/* --byseat: P0이 앉은 시작 자리(맵의 P0~P5 자리 6곳)와 열쇠 구역(0 좌상 ~ 3 우하, 4 = 맵에 적힌 자리)별 승률 집계 */
+static int by_seat = 0, last_seat = 0, last_zone = 4, seat_pos_ok = 0;
+static Position seat_pos[NPC_COUNT];
+static long seat_n[NPC_COUNT][5], seat_w[NPC_COUNT][5];
+
 /* 시작 위치 섞기: 맵에 적힌 P0~P5 스폰 자리 6곳은 그대로 두고, 어느 플레이어가 어느 자리에 서는지만 섞는다.
    (교수님 방식: 스폰 좌표는 맵 고정, 플레이어 배정만 랜덤) */
 static int shuffle_spawns(Game *g)
@@ -115,15 +123,93 @@ static int shuffle_spawns(Game *g)
     Position spot[NPC_COUNT];
     int i;
     for (i = 0; i < NPC_COUNT; ++i) spot[i] = g->players[i].spawn;
+    if (!seat_pos_ok) { for (i = 0; i < NPC_COUNT; ++i) seat_pos[i] = spot[i]; seat_pos_ok = 1; }
+    last_zone = 4;
     for (i = 0; i < NPC_COUNT; ++i) {
-        int j = i + (int)rnd(NPC_COUNT - i);
+        int j = fix_seat ? i : i + (int)rnd(NPC_COUNT - i);
         Position tmp = spot[i]; spot[i] = spot[j]; spot[j] = tmp;
         g->players[i].pos = g->players[i].spawn = spot[i];
     }
+    for (i = 0; i < NPC_COUNT; ++i) if (seat_pos[i].x == g->players[0].spawn.x && seat_pos[i].y == g->players[0].spawn.y) last_seat = i;
     /* H0 제거: 영원히 쉬는 시체로 만든다 */
     g->players[HUMAN_PLAYER].hp = 0;
     g->players[HUMAN_PLAYER].rest = UINT64_MAX;
     return 1;
+}
+
+/* 열쇠 구역: 교수님이 열쇠를 서로 다른 4구역 중 한 곳에서 시작시킬 수 있다고 해서 만든 옵션.
+   네 모서리(좌상, 우상, 좌하, 우하)에서 가장 가까운 시작 자리의 바로 옆 바닥 칸 중 하나에 열쇠를 놓는다.
+   --keyzones = 판마다 무작위 구역, --keyzone N = 고정(0 좌상, 1 우상, 2 좌하, 3 우하). 안 주면 맵에 적힌 열쇠 자리 그대로. */
+static int key_zone = -2; /* -2 끔, -1 무작위, 0~3 고정 */
+/* --keycells "x,y;x,y;..." : 열쇠가 놓일 후보 칸을 직접 지정(판마다 이 중 하나를 무작위로 고른다, 최대 16칸).
+   예: v1 지도의 y4·y8 줄 블록의 출구쪽 옆 4칸 --keycells "4,4;8,4;4,8;8,8" (순서: 좌상, 우상, 좌하, 우하 = --byseat 표의 열쇠 열 순서).
+   지도 파일 옆에 <지도파일>.keycells (한 줄 "x,y;x,y;...")가 있으면 옵션 없이도 그 칸들을 쓴다(maps\v1_lecture1_topleft.dat.keycells). */
+static int key_cells[16][2], n_key_cells = 0;
+static int iabs(int v) { return v < 0 ? -v : v; }
+static void place_key(Game *g)
+{
+    static const int dx[4] = {0, 0, -1, 1}, dy[4] = {-1, 1, 0, 0};
+    int z = key_zone < 0 ? (int)rnd(4) : key_zone, best = -1, bd = 1 << 30, i, d, n = 0, cand[4][2];
+    int tx = (z & 1) ? g->size - 1 : 0, ty = (z & 2) ? g->size - 1 : 0;
+    last_zone = z;
+    if (n_key_cells > 0) { /* --keycells: 지정한 칸들 중 한 곳 */
+        i = (int)rnd((unsigned)n_key_cells);
+        g->key.x = g->key_start.x = key_cells[i][0];
+        g->key.y = g->key_start.y = key_cells[i][1];
+        last_zone = i & 3;
+        return;
+    }
+    for (i = 0; i < NPC_COUNT; ++i) {
+        int dd = iabs(g->players[i].spawn.x - tx) + iabs(g->players[i].spawn.y - ty);
+        if (dd < bd) { bd = dd; best = i; }
+    }
+    for (d = 0; d < 4; ++d) {
+        int x = g->players[best].spawn.x + dx[d], y = g->players[best].spawn.y + dy[d], k, on_spawn = 0;
+        if (x < 0 || y < 0 || x >= g->size || y >= g->size || g->terrain[y][x] != ' ') continue;
+        for (k = 0; k < PLAYER_COUNT; ++k) if (g->players[k].spawn.x == x && g->players[k].spawn.y == y) on_spawn = 1;
+        if (!on_spawn) { cand[n][0] = x; cand[n][1] = y; ++n; }
+    }
+    if (!n) return;
+    i = (int)rnd((unsigned)n);
+    g->key.x = g->key_start.x = cand[i][0];
+    g->key.y = g->key_start.y = cand[i][1];
+}
+
+/* 지도에 H0 표시가 없으면(H0를 완전히 뺀 지도) 코어 로더가 요구하는 H0를 빈 바닥 칸 하나에 넣은 임시 지도를 %TEMP%에 만들어 그 경로를 돌려준다.
+   시뮬레이터는 H0를 영구 사망 처리(경쟁 제외)하므로 경기에는 영향이 없다. H0가 이미 있으면 원래 경로를 그대로 돌려준다. */
+static const char *with_h0(const char *path, char *out, size_t cap)
+{
+    static char buf[MAP_MAX][MAP_MAX * 2 + 4];
+    FILE *f = fopen(path, "r"), *w;
+    int n = 0, i, x, has = 0, done = 0;
+    const char *tmp = getenv("TEMP");
+    if (!f) return path;
+    while (n < MAP_MAX && fgets(buf[n], (int)sizeof(buf[n]), f)) ++n;
+    fclose(f);
+    for (i = 0; i < n; ++i) { int len = (int)strlen(buf[i]); for (x = 0; x + 1 < len; x += 2) if (buf[i][x] == 'H' && buf[i][x + 1] == '0') has = 1; }
+    if (has || n < 3) return path;
+    for (i = 1; i < n - 1 && !done; ++i) {
+        int len = (int)strlen(buf[i]);
+        for (x = 2; x + 3 < len && !done; x += 2)
+            if (buf[i][x] == ' ' && buf[i][x + 1] == ' ') { buf[i][x] = 'H'; buf[i][x + 1] = '0'; done = 1; }
+    }
+    if (!done) return path;
+    snprintf(out, cap, "%s\\sim_tmp_map.dat", tmp ? tmp : ".");
+    w = fopen(out, "w");
+    if (!w) return path;
+    for (i = 0; i < n; ++i) fputs(buf[i], w);
+    fclose(w);
+    return out;
+}
+
+/* "x,y;x,y;..." 를 열쇠 후보 칸 목록(key_cells)에 읽는다. --keycells 값과 지도 옆 .keycells 파일에서 같이 쓴다. */
+static void parse_keycells(const char *q)
+{
+    int cx, cy, used = 0;
+    while (n_key_cells < 16 && sscanf(q, "%d,%d%n", &cx, &cy, &used) == 2) {
+        key_cells[n_key_cells][0] = cx; key_cells[n_key_cells][1] = cy; ++n_key_cells;
+        q += used; while (*q == ';' || *q == ' ') ++q;
+    }
 }
 
 /* --show 용 텍스트 보드 (K숫자 = 열쇠 소유자) */
@@ -255,6 +341,18 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--seed") && i + 1 < argc) seed = _strtoui64(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "--scenario") && i + 1 < argc) only = argv[++i];
         else if (!strcmp(argv[i], "--map") && i + 1 < argc) MAP_FILE = argv[++i]; /* 다른 지도로 시험: maps\m1_open4.dat 등 */
+        else if (!strcmp(argv[i], "--fixseat")) fix_seat = 1; /* P0 자리를 맵에 적힌 자리로 고정 */
+        else if (!strcmp(argv[i], "--byseat")) by_seat = 1; /* 끝에 시작 자리별/열쇠 구역별 승률표를 낸다 */
+        else if (!strcmp(argv[i], "--keycells") && i + 1 < argc) { /* 열쇠 후보 칸을 직접 지정: "1,5;11,5;1,8;11,8" */
+            const char *q = argv[++i]; int cx, cy, used = 0;
+            while (n_key_cells < 16 && sscanf(q, "%d,%d%n", &cx, &cy, &used) == 2) {
+                key_cells[n_key_cells][0] = cx; key_cells[n_key_cells][1] = cy; ++n_key_cells;
+                q += used; while (*q == ';' || *q == ' ') ++q;
+            }
+            key_zone = -1;
+        }
+        else if (!strcmp(argv[i], "--keyzones")) key_zone = -1; /* 열쇠를 판마다 무작위 모서리 구역에 놓는다 */
+        else if (!strcmp(argv[i], "--keyzone") && i + 1 < argc) key_zone = atoi(argv[++i]) & 3; /* 열쇠 구역 고정: 0 좌상, 1 우상, 2 좌하, 3 우하 */
         else if (!strcmp(argv[i], "--max-turns") && i + 1 < argc) max_turns = atoi(argv[++i]);
         else if (!strcmp(argv[i], "--show")) verbose = 1;
         else if (!strcmp(argv[i], "--watch") && i + 1 < argc) watch_ms = atoi(argv[++i]);
@@ -265,6 +363,17 @@ int main(int argc, char **argv)
         else { fprintf(stderr, "bad arg %s\n", argv[i]); return 1; }
     }
     setvbuf(stdout, NULL, _IONBF, 0);
+    {   /* H0가 없는 지도도 읽을 수 있게 하고, 지도 옆에 <지도파일>.keycells 가 있으면 열쇠 후보 칸을 거기서 읽는다(--keycells 가 우선) */
+        static char map_tmp[512], kc_path[600];
+        FILE *kf;
+        snprintf(kc_path, sizeof(kc_path), "%s.keycells", MAP_FILE);
+        MAP_FILE = with_h0(MAP_FILE, map_tmp, sizeof(map_tmp));
+        if (n_key_cells == 0 && (kf = fopen(kc_path, "r")) != NULL) {
+            char line[256];
+            if (fgets(line, (int)sizeof(line), kf)) { parse_keycells(line); if (n_key_cells > 0 && key_zone == -2) key_zone = -1; }
+            fclose(kf);
+        }
+    }
     if (teams_arg) {
         static char buf[512]; char *tok, *ctx = NULL; int n = 0; const char *nm[6];
         snprintf(buf, sizeof(buf), "%s", teams_arg);
@@ -302,6 +411,7 @@ int main(int argc, char **argv)
             if (!game_load(&g, f, err, sizeof(err))) { fclose(f); fprintf(stderr, "map load fail %s: %s\n", MAP_FILE, err); return 1; }
             fclose(f);
             if (!shuffle_spawns(&g)) return 1;
+            if (key_zone > -2) place_key(&g);
             /* 상대 5명을 P1~P5 자리에 무작위 배치 */
             names[0] = ours;
             for (k = 0; k < 5; ++k) names[k + 1] = pool_pick(scs[sc].opp[k]);
@@ -309,6 +419,10 @@ int main(int argc, char **argv)
             for (k = 0; k < NPC_COUNT; ++k) seat[k] = find(names[k]);
             w = play(&g, seat, names, max_turns, verbose, &st);
             ++st.games;
+            if (by_seat && strcmp(scs[sc].name, "safes") && strcmp(scs[sc].name, "samples") && strcmp(scs[sc].name, "teams") && strcmp(scs[sc].name, "campers")) {
+                ++seat_n[last_seat][last_zone];
+                if (w == 0) ++seat_w[last_seat][last_zone];
+            }
             if (w < 0) ++st.draws;
             else { st.win_by[strat_index(names[w])]++; if (w == 0) { ++st.wins; st.turns_sum += g.turn; } }
             if (verbose || watch_ms >= 0) printf("== result: %s (%s)\n", w < 0 ? "DRAW" : "WIN", w < 0 ? "-" : names[w]);
@@ -330,6 +444,18 @@ int main(int argc, char **argv)
         }
     }
     if (rep) fclose(rep);
+    if (by_seat) {
+        int s2, z2;
+        printf("\n== 시작 자리별 승률 (safes/samples/teams/campers 제외한 시나리오 합산)\n");
+        printf("자리(x,y)   판수   승률 | 열쇠 좌상  우상  좌하  우하  맵\n");
+        for (s2 = 0; s2 < NPC_COUNT; ++s2) {
+            long n = 0, wv = 0;
+            for (z2 = 0; z2 < 5; ++z2) { n += seat_n[s2][z2]; wv += seat_w[s2][z2]; }
+            printf("(%2d,%2d) %8ld %5.1f%% |", seat_pos[s2].x, seat_pos[s2].y, n, n ? 100.0 * wv / n : 0.0);
+            for (z2 = 0; z2 < 5; ++z2) { if (seat_n[s2][z2]) printf(" %5.1f", 100.0 * seat_w[s2][z2] / seat_n[s2][z2]); else printf("     -"); }
+            putchar('\n');
+        }
+    }
     printf("key-drop rule check: %ld drops, %ld violations\n", key_drops, key_rule_violations);
     return 0;
 }
