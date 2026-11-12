@@ -110,6 +110,9 @@ static Strategy find(const char *name)
     fprintf(stderr, "unknown strategy %s\n", name); exit(1);
 }
 
+static int no_key_attack = 1;     /* 열쇠 소유자의 공격 금지(교수님 패치 예정 규칙). --keyattack 으로 끈다 */
+static long p0_key_attack_blocked = 0; /* 그중 P0이 낸 것 */
+static long key_attack_blocked = 0; /* 막힌 공격 명령 수(상대 전략 포함) */
 static int fix_seat = 0; /* --fixseat: 자리를 섞지 않고 맵에 적힌 P0 자리에 내가 선다(교실 시연처럼 자리가 정해진 경우) */
 /* --byseat: P0이 앉은 시작 자리(맵의 P0~P5 자리 6곳)와 열쇠 구역(0 좌상 ~ 3 우하, 4 = 맵에 적힌 자리)별 승률 집계 */
 static int by_seat = 0, last_seat = 0, last_zone = 4, seat_pos_ok = 0;
@@ -284,6 +287,9 @@ static int play(Game *g, Strategy seat[NPC_COUNT], const char *names[NPC_COUNT],
         {
             /* 규칙 검사 (Rule.txt 8절): 열쇠 소유자가 죽으면 죽은 칸에 열쇠가 떨어진다. 출구에서 죽으면 최초 @- 자리로. */
             int owner = g->key_owner;
+            /* 교수님 패치 예정: 열쇠를 든 사람은 공격할 수 없다. 코어 game.c는 그대로 두고, 소유자의 공격 명령을 무효 명령(-1)으로 바꿔
+               코어의 "무효 명령" 처리(행동 취소 + 피해 1)를 받게 한다. --keyattack 이면 예전 규칙(소유자도 공격 가능). */
+            if (no_key_attack && owner >= 0 && cmd[owner] >= COMMAND_ATTACK_UP && cmd[owner] <= COMMAND_ATTACK_RIGHT) { cmd[owner] = (Command)-1; ++key_attack_blocked; if (owner == 0) ++p0_key_attack_blocked; }
             { int hp0 = g->players[0].hp; game_resolve(g, cmd);
               if (hp0 > 0 && g->players[0].hp < hp0) { /* P0이 피해를 입은 턴: 취소가 섞였으면 취소, 아니면 공격 */
                   if (hp0 == MAX_HP) { if (g->cancelled[0]) ++st->hit_cancel; else ++st->hit_attack; }
@@ -341,6 +347,7 @@ int main(int argc, char **argv)
         else if (!strcmp(argv[i], "--seed") && i + 1 < argc) seed = _strtoui64(argv[++i], NULL, 10);
         else if (!strcmp(argv[i], "--scenario") && i + 1 < argc) only = argv[++i];
         else if (!strcmp(argv[i], "--map") && i + 1 < argc) MAP_FILE = argv[++i]; /* 다른 지도로 시험: maps\m1_open4.dat 등 */
+        else if (!strcmp(argv[i], "--keyattack")) no_key_attack = 0; /* 예전 규칙: 열쇠 소유자도 공격 가능 */
         else if (!strcmp(argv[i], "--fixseat")) fix_seat = 1; /* P0 자리를 맵에 적힌 자리로 고정 */
         else if (!strcmp(argv[i], "--byseat")) by_seat = 1; /* 끝에 시작 자리별/열쇠 구역별 승률표를 낸다 */
         else if (!strcmp(argv[i], "--keycells") && i + 1 < argc) { /* 열쇠 후보 칸을 직접 지정: "1,5;11,5;1,8;11,8" */
@@ -457,5 +464,6 @@ int main(int argc, char **argv)
         }
     }
     printf("key-drop rule check: %ld drops, %ld violations\n", key_drops, key_rule_violations);
+    printf("열쇠 소유자 공격 금지: %s, 막힌 공격 명령 %ld개 (그중 P0 %ld개)\n", no_key_attack ? "켬" : "끔", key_attack_blocked, p0_key_attack_blocked);
     return 0;
 }
