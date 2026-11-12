@@ -79,6 +79,28 @@ static const Scenario SCEN[] = {
 };
 #define NSCEN ((int)(sizeof(SCEN) / sizeof(SCEN[0])))
 
+/* 열쇠 소유자의 공격을 "안 한 것"으로 만든다: 복사본으로 이번 턴 이동만 풀어 최종 위치를 구한 뒤(이동은 공격 방향과 무관),
+   소유자 부채꼴에 아무도 들지 않는 공격 방향을 고른다. 네 방향 모두 누군가 맞는 경우는 가장 적게 맞는 방향(드묾, 세어서 보고). */
+static long key_attack_leaks = 0;
+static Command quiet_attack(const Game *g, const Command cmd[PLAYER_COUNT], int owner)
+{
+    Game t = *g; Command c[PLAYER_COUNT]; int d, j, best = 0, bestn = 99;
+    memcpy(c, cmd, sizeof(c)); c[owner] = COMMAND_ATTACK_UP;
+    game_resolve(&t, c);
+    for (d = 0; d < 4; ++d) {
+        int n = 0; Position a = g->players[owner].pos;
+        for (j = 0; j < PLAYER_COUNT; ++j) {
+            Position e, ctr = {a.x + (d == 2 ? -1 : d == 3 ? 1 : 0), a.y + (d == 0 ? -1 : d == 1 ? 1 : 0)};
+            if (j == owner || g->players[j].hp <= 0) continue;
+            e = t.players[j].pos;
+            if (d < 2 ? (e.y == ctr.y && e.x >= ctr.x - 1 && e.x <= ctr.x + 1) : (e.x == ctr.x && e.y >= ctr.y - 1 && e.y <= ctr.y + 1)) ++n;
+        }
+        if (n < bestn) { bestn = n; best = d; }
+    }
+    if (bestn > 0) ++key_attack_leaks;
+    return (Command)(COMMAND_ATTACK_UP + best);
+}
+
 static unsigned long long rng_state = 1;
 static unsigned rnd(unsigned n) /* xorshift64 */
 {
@@ -287,9 +309,9 @@ static int play(Game *g, Strategy seat[NPC_COUNT], const char *names[NPC_COUNT],
         {
             /* 규칙 검사 (Rule.txt 8절): 열쇠 소유자가 죽으면 죽은 칸에 열쇠가 떨어진다. 출구에서 죽으면 최초 @- 자리로. */
             int owner = g->key_owner;
-            /* 교수님 패치 예정: 열쇠를 든 사람은 공격할 수 없다. 코어 game.c는 그대로 두고, 소유자의 공격 명령을 무효 명령(-1)으로 바꿔
-               코어의 "무효 명령" 처리(행동 취소 + 피해 1)를 받게 한다. --keyattack 이면 예전 규칙(소유자도 공격 가능). */
-            if (no_key_attack && owner >= 0 && cmd[owner] >= COMMAND_ATTACK_UP && cmd[owner] <= COMMAND_ATTACK_RIGHT) { cmd[owner] = (Command)-1; ++key_attack_blocked; if (owner == 0) ++p0_key_attack_blocked; }
+            /* 교수님 패치 예정: 열쇠를 든 사람은 공격할 수 없다(공격해도 아무 일도 일어나지 않음, 피해도 없음).
+               코어 game.c는 그대로 두고, 소유자의 공격을 "아무도 맞지 않는 방향"으로 돌려 효과가 없게 한다. --keyattack 이면 예전 규칙. */
+            if (no_key_attack && owner >= 0 && cmd[owner] >= COMMAND_ATTACK_UP && cmd[owner] <= COMMAND_ATTACK_RIGHT) { cmd[owner] = quiet_attack(g, cmd, owner); ++key_attack_blocked; if (owner == 0) ++p0_key_attack_blocked; }
             { int hp0 = g->players[0].hp; game_resolve(g, cmd);
               if (hp0 > 0 && g->players[0].hp < hp0) { /* P0이 피해를 입은 턴: 취소가 섞였으면 취소, 아니면 공격 */
                   if (hp0 == MAX_HP) { if (g->cancelled[0]) ++st->hit_cancel; else ++st->hit_attack; }
@@ -464,6 +486,6 @@ int main(int argc, char **argv)
         }
     }
     printf("key-drop rule check: %ld drops, %ld violations\n", key_drops, key_rule_violations);
-    printf("열쇠 소유자 공격 금지: %s, 막힌 공격 명령 %ld개 (그중 P0 %ld개)\n", no_key_attack ? "켬" : "끔", key_attack_blocked, p0_key_attack_blocked);
+    printf("열쇠 소유자 공격 금지: %s, 막힌 공격 명령 %ld개 (그중 P0 %ld개, 사방이 막혀 못 피한 것 %ld개)\n", no_key_attack ? "켬" : "끔", key_attack_blocked, p0_key_attack_blocked, key_attack_leaks);
     return 0;
 }
