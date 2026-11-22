@@ -2,7 +2,7 @@
    snapshot_write -> AI의 fopen/snapshot_read 흐름을 그대로 유지하면서 디스크 I/O를 없앤다.
    그 외 경로는 진짜 fopen. 열린 파일 수를 세어 AI의 fclose 누락도 잡는다. */
 #define DIAGNOSTICS_IMPLEMENTATION
-#include "../FinalExam00/diagnostics.h"
+#include "../FinalExam01/diagnostics.h"
 #include <windows.h>
 #include <io.h>
 #include <fcntl.h>

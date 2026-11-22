@@ -2,7 +2,7 @@
    (아무것도 붙여넣지 않아도 빌드와 실행이 되게 하려는 임시 내용이다.)
    사용법은 sim.c 맨 위 주석 참고: 팀원의 playerN_choose_command 함수를
    아래 strat_team2 으로 이름만 바꿔서 통째로 붙여넣으면 된다. */
-#include "../../FinalExam00/player_api.h"
+#include "../../FinalExam01/player_api.h"
 
 Command player1_choose_command(const char *state_path);
 

@@ -2,27 +2,29 @@
    차이점: (1) AI를 별도 프로세스 대신 같은 프로세스에서 호출해 빠르게 수천 판을 돌린다.
           (2) H0는 영구 사망 처리(최종 대회와 동일하게 6명만 경쟁). 지도에 H0 표시가 없어도 읽는다(임시 지도에 H0를 넣어 코어에 넘긴다).
           (3) 매 판 P0~P5 시작 위치를 무작위로 섞는다(교수님 공지 반영). --fixseat 를 주면 맵에 적힌 P0 자리에 고정한다.
-   (4) 맵은 기본으로 교수님 맵(FinalExamGameCore\dungeonmap.dat). --map 으로 다른 맵 파일을 줄 수 있다(StrategySim\maps 에 예시).
+   (4) 맵은 기본으로 FinalExam01\dungeonmap.dat (17x17, 본 시험 맵). --map 으로 다른 맵 파일을 줄 수 있다(StrategySim\maps 에 예시).
    (5) 열쇠 위치: 기본은 맵에 적힌 자리. --keycells "x,y;x,y;..." 로 후보 칸을 주면 판마다 그 중 하나에 놓고,
        지도 옆에 <지도파일>.keycells 가 있으면 옵션 없이도 그 칸들을 쓴다. --keyzones / --keyzone N 은 네 모서리 구역에 놓는다.
    사용: sim.exe [--games N] [--seed S] [--scenario 이름|all] [--map 파일] [--fixseat] [--keycells ..] [--byseat] [--show] [--watch ms]
    --byseat : 끝에 시작 자리별 / 열쇠 칸별 승률표를 낸다.
    --teams a,b,c,d,e,f : 6팀을 이름으로 직접 지정 (첫 번째가 승률 기준 팀, 예: ours,team1,team2,safe,vulture,rusher)
-   P0 자리(ours)는 FinalExamGameCore\player0.c 의 player0_choose_command 이다. 거기에 내 전략을 넣으면 된다.
+   ours = FinalExam01\player4.c 의 player4_choose_command (우리 팀 P4 제출 파일 그대로). 시뮬 안에서는 편의상 0번 자리에서 돌고,
+   시작 위치는 매 판 6곳으로 섞으므로 실제 게임의 자리 추첨과 같다. 교수님 성향 AI(FinalExam00\player1~5.c)는 sample/prof2~prof5, 우리 옛 P4 제출본(custom\oldp4.c)은 oldp4 이름으로 쓴다(기준선 비교용).
    팀원 전략 넣기: custom\team1.c ~ team5.c 의 strat_teamN 을 팀원의 playerN_choose_command 로 교체(함수 이름만 strat_teamN 으로),
    보조 함수/전역은 static 으로, 고친 뒤 build.bat 로 다시 빌드. 같은 --seed 로 돌리면 같은 판이라 비교가 공정하다.
    주의: 시뮬레이터는 전략을 같은 프로그램 안에서 이어 부르므로 static/전역으로 이전 턴을 기억하는 전략은 실제 게임(매 턴 새 프로세스)과 결과가 다르다.
    메타(상대 5명 구성)는 아래 SCEN 표의 한 줄이다. 이름 앞에 *를 붙인 "*all" 같은 항목은 판마다 POOLS 에서 무작위로 뽑는다. */
 #include <windows.h>
 #include <time.h>
-#include "../FinalExam00/game.h"
+#include "../FinalExam01/game.h"
 
 typedef Command (*Strategy)(const char *);
 extern int sim_open_files; /* sim_io.c */
-Command player0_choose_command(const char *);
-Command player1_choose_command(const char *); /* 교수님 예제 AI (최종 업데이트의 성향 AI: P1 공격형, P2 길막형, P3 생존형, P4 탈취형, P5 균형형) */
-Command player2_choose_command(const char *), player3_choose_command(const char *);
-Command player4_choose_command(const char *), player5_choose_command(const char *);
+Command player4_choose_command(const char *); /* FinalExam01\player4.c = 우리 팀(ours) */
+/* 교수님 성향 AI(FinalExam00\player0~5.c: P1 공격형, P2 길막형, P3 생존형, P4 탈취형, P5 균형형). build.bat 이 함수 이름만 profN_ 으로 바꾼 복사본을 만들어 링크한다. */
+Command prof1_choose_command(const char *), prof2_choose_command(const char *), prof3_choose_command(const char *);
+Command prof4_choose_command(const char *), prof5_choose_command(const char *);
+Command strat_oldp4(const char *); /* custom\oldp4.c: 우리 팀의 예전 P4 제출본 */
 Command strat_rusher(const char *), strat_wounded(const char *);
 Command strat_gatehunter(const char *), strat_hunter(const char *);
 Command strat_safe(const char *), strat_vulture(const char *), strat_exitguard(const char *);
@@ -34,9 +36,9 @@ Command strat_team4(const char *), strat_team5(const char *);
 /* 전략 이름표. 새 전략을 만들면 여기에 {"이름", 함수} 한 줄만 추가하면 시나리오에서 이름으로 쓸 수 있다. */
 typedef struct { const char *name; Strategy fn; } Entry;
 static const Entry STRATS[] = {
-    {"ours", player0_choose_command}, {"sample", player1_choose_command},
-    {"prof2", player2_choose_command}, {"prof3", player3_choose_command},
-    {"prof4", player4_choose_command}, {"prof5", player5_choose_command},
+    {"ours", player4_choose_command}, {"oldp4", strat_oldp4}, {"sample", prof1_choose_command},
+    {"prof2", prof2_choose_command}, {"prof3", prof3_choose_command},
+    {"prof4", prof4_choose_command}, {"prof5", prof5_choose_command},
     {"rusher", strat_rusher}, {"wounded", strat_wounded},
     {"gatehunter", strat_gatehunter}, {"hunter", strat_hunter},
     {"safe", strat_safe}, {"vulture", strat_vulture}, {"exitguard", strat_exitguard},
@@ -80,7 +82,7 @@ static const Scenario SCEN[] = {
     {"camp-2",       {"camper", "camper", "rusher", "wounded", "hunter"}},
     {"camp-1",       {"camper", "rusher", "wounded", "gatehunter", "safe"}},
     {"camp-rand",    {"*camp", "*camp", "*camp", "*camp", "*camp"}},
-    /* 교수님 최종 업데이트의 성향 AI 5명(P1 공격형, P2 길막형, P3 생존형, P4 탈취형, P5 균형형). 실제 교실 상대와 가장 가깝다 */
+    /* 교수님 성향 AI 5명(P1 공격형, P2 길막형, P3 생존형, P4 탈취형, P5 균형형). 실제 교실 상대와 가장 가깝다 */
     {"prof-ai",      {"sample", "prof2", "prof3", "prof4", "prof5"}},
 };
 #define NSCEN ((int)(sizeof(SCEN) / sizeof(SCEN[0])))
@@ -340,7 +342,7 @@ static int play(Game *g, Strategy seat[NPC_COUNT], const char *names[NPC_COUNT],
 int main(int argc, char **argv)
 {
     /* 맵은 교수님 맵 하나로 고정 (실제 시험 환경과 같다). 바꾸고 싶으면 아래 상수만 고친다. */
-    const char *MAP_FILE = "../FinalExam00/dungeonmap.dat"; /* 교수님 최종 업데이트 맵 */
+    const char *MAP_FILE = "../FinalExam01/dungeonmap.dat"; /* FinalExam01 본 시험 맵(17x17) */
     int games = 200, max_turns = 600, verbose = 0, i, sc, gm; /* 최종 규칙은 턴 제한이 없다(1000턴 무탈출 무승부). 시뮬은 기본 600턴에서 끊고 못 나간 사람은 6위로 센다 */
     const char *only = "all", *report_path = NULL, *label = "", *ours = "ours";
     const char *teams_arg = NULL; Scenario custom; const Scenario *scs = SCEN; int nsc = NSCEN;
@@ -404,8 +406,8 @@ int main(int argc, char **argv)
         localtime_s(&lt, &now); strftime(when, sizeof(when), "%Y-%m-%d %H:%M", &lt);
         rep = fopen(report_path, "a");
         if (!rep) { fprintf(stderr, "cannot open report %s\n", report_path); return 1; }
-        fprintf(rep, "\n## %s %s\n\n- P0 전략: %s / 맵: %s (고정) / 시나리오당 %d판 / seed %llu / 최대 %d턴 / 스폰 자리 고정, 플레이어 배정만 랜덤 / H0 제외\n\n",
-            when, label, strcmp(ours, "ours") ? ours : "player0.c (P0)", MAP_FILE, games, seed, max_turns);
+        fprintf(rep, "\n## %s %s\n\n- 우리 전략: %s / 맵: %s (고정) / 시나리오당 %d판 / seed %llu / 최대 %d턴 / 스폰 자리 고정, 플레이어 배정만 랜덤 / H0 제외\n\n",
+            when, label, strcmp(ours, "ours") ? ours : "FinalExam01\\player4.c", MAP_FILE, games, seed, max_turns);
         fprintf(rep, "| 시나리오 | 상대 구성 | P0 승률 | 무승부 | 평균 승리 턴 | 판당 사망 | 판당 취소 | 최대 ms | 승자 분포 |\n");
         fprintf(rep, "|---|---|---:|---:|---:|---:|---:|---:|---|\n");
     }

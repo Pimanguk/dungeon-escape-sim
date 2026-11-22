@@ -1,6 +1,6 @@
 /* 시뮬레이션 전용 상대 전략들. 제출용이 아니므로 헬퍼 함수를 자유롭게 쓴다.
    모든 전략은 실제 코어와 똑같이 상태 파일 경로만 받고, static 상태를 남기지 않는다. */
-#include "../FinalExam00/player_api.h"
+#include "../FinalExam01/player_api.h"
 
 static const int DX[4] = {0, 0, -1, 1}, DY[4] = {-1, 1, 0, 0};
 #define FAR 9999
